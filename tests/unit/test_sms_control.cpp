@@ -13,7 +13,7 @@ using namespace std::chrono_literals;
 
 namespace {
   struct fake_clock_t {
-    sms::control::clock_t::time_point t {};
+    steady_clock_t::time_point t {};
   };
 
   struct fixture_t {
@@ -27,7 +27,7 @@ namespace {
       baton.on_request = [this](const std::string &name) { requests.push_back(name); };
     }
 
-    void tick(sms::control::clock_t::duration d) {
+    void tick(steady_clock_t::duration d) {
       clock.t += d;
     }
   };
@@ -141,7 +141,7 @@ TEST(SmsControl, IdleDriverLosesControl) {
   f.tick(4min);
   EXPECT_TRUE(f.baton.may_input("A"));  // input resets the idle clock
   f.tick(4min);
-  EXPECT_TRUE(f.baton.view("B").driver_name == "Tim");
+  EXPECT_EQ(f.baton.view("B").driver_name, "Tim");
   f.tick(2min);
   EXPECT_EQ(f.baton.view("B").driver_name, "");  // free after 5 min without input
   EXPECT_EQ(f.baton.request("B"), result_e::ok);
@@ -183,4 +183,93 @@ TEST(SmsControl, ReplyCarriesStateAndRefusals) {
   refused(result_e::not_owner, 403, "Only the owner can take control back");
   refused(result_e::no_such_seat, 404, "That viewer is no longer connected");
   refused(result_e::no_stream, 409, "No stream is running");
+}
+
+TEST(SmsControl, DriverChangeCallbackRunsOutsideTheLock) {
+  fixture_t f;
+  f.baton.on_driver_change = [&](const std::string &old) {
+    f.changes.push_back(old);
+    f.baton.view("A");  // would self-deadlock if the lock were still held
+  };
+  f.baton.join("A", "Tim");
+  f.baton.join("B", "Lee");
+  EXPECT_EQ(f.baton.give("A", seat_id("B")), result_e::ok);
+  f.baton.host_takeback();
+  f.baton.host_release();
+  EXPECT_EQ(f.changes.size(), 2u);
+}
+
+TEST(SmsControl, UnknownOrEmptyCertNeverDrives) {
+  fixture_t f;
+  f.baton.join("A", "Tim");
+  f.baton.join("B", "Lee");
+  f.baton.host_release();  // control is free
+  EXPECT_FALSE(f.baton.may_input(""));
+  EXPECT_FALSE(f.baton.may_input("nobody"));
+  EXPECT_EQ(f.baton.give("", seat_id("B")), result_e::not_driver);
+  EXPECT_EQ(f.baton.give("nobody", seat_id("B")), result_e::not_driver);
+  EXPECT_FALSE(f.baton.remote_driving());
+}
+
+TEST(SmsControl, HostTakebackWithNoSeatsDoesNotHoldTheNextSeat) {
+  fixture_t f;
+  f.baton.host_takeback();
+  f.baton.join("A", "Tim");
+  EXPECT_TRUE(f.baton.may_input("A"));
+}
+
+TEST(SmsControl, RepeatRequestTellsHostOnce) {
+  fixture_t f;
+  f.baton.join("A", "Tim");
+  f.baton.join("B", "Lee");
+  f.baton.request("B");
+  f.baton.request("B");
+  EXPECT_EQ(f.requests.size(), 1u);
+}
+
+TEST(SmsControl, SecondSeatJoiningResetsIdleClock) {
+  fixture_t f;
+  f.baton.set_idle_limit(5min);
+  f.baton.join("A", "Tim");
+  f.tick(10min);
+  f.baton.join("B", "Lee");
+  EXPECT_TRUE(f.baton.may_input("A"));
+}
+
+TEST(SmsControl, LeavingClearsAsked) {
+  fixture_t f;
+  f.baton.join("A", "Tim");
+  f.baton.join("B", "Lee");
+  f.baton.request("B");
+  f.baton.leave("B");
+  EXPECT_TRUE(f.baton.asked_seats().empty());
+}
+
+TEST(SmsControl, DriverChangeFiresOnHostTakebackAndIdleExpiryNotOnDriverLeaving) {
+  fixture_t f;
+  f.baton.set_idle_limit(5min);
+  f.baton.join("A", "Tim");
+  f.baton.join("B", "Lee");
+  f.baton.host_takeback();
+  ASSERT_EQ(f.changes.size(), 1u);
+  EXPECT_EQ(f.changes[0], "A");
+  f.baton.request("B");  // free: B drives
+  f.tick(6min);
+  EXPECT_FALSE(f.baton.remote_driving());  // idle expiry
+  ASSERT_EQ(f.changes.size(), 2u);
+  EXPECT_EQ(f.changes[1], "B");
+  f.baton.request("A");
+  f.baton.leave("A");  // driver leaves: nothing to release
+  EXPECT_EQ(f.changes.size(), 2u);
+}
+
+TEST(SmsControl, HostReleaseFreesControl) {
+  fixture_t f;
+  f.baton.join("A", "Tim");
+  f.baton.join("B", "Lee");
+  f.baton.host_release();
+  EXPECT_FALSE(f.baton.remote_driving());
+  EXPECT_EQ(f.changes.size(), 1u);
+  EXPECT_EQ(f.baton.request("B"), result_e::ok);
+  EXPECT_TRUE(f.baton.may_input("B"));
 }

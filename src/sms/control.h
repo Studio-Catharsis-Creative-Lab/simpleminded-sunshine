@@ -15,7 +15,7 @@
 #include <boost/property_tree/ptree.hpp>
 
 namespace sms::control {
-  using clock_t = std::chrono::steady_clock;
+  using steady_clock_t = std::chrono::steady_clock;
 
   /**
    * @brief Short, stable, public id for a seat: 12 hex chars of SHA-256 of its certificate.
@@ -30,7 +30,7 @@ namespace sms::control {
     std::string id;  ///< seat_id(cert).
     std::string name;  ///< Paired-device name.
     bool asked = false;  ///< Asked for control and has not got it yet.
-    clock_t::time_point joined;  ///< When the seat connected.
+    steady_clock_t::time_point joined;  ///< When the seat connected.
   };
 
   /**
@@ -59,7 +59,7 @@ namespace sms::control {
    */
   class baton_t {
   public:
-    explicit baton_t(std::function<clock_t::time_point()> now = clock_t::now);
+    explicit baton_t(std::function<steady_clock_t::time_point()> now = steady_clock_t::now);
 
     void join(const std::string &cert, const std::string &name);
     void leave(const std::string &cert);
@@ -83,20 +83,23 @@ namespace sms::control {
     std::function<void(const std::string &name)> on_request;  ///< Tell the host computer.
 
   private:
-    void expire_idle_locked();
-    void set_driver_locked(const std::string &cert);
+    // The *_locked helpers return the old driver cert when the driver changed, else empty.
+    // Callers fire on_driver_change with it only after releasing mutex_ (see notify_change).
+    std::string expire_idle_locked();
+    std::string set_driver_locked(const std::string &cert);
+    void notify_change(const std::string &old);
     std::string owner_cert_locked() const;
     seat_t *find_by_id_locked(const std::string &id);
     seat_t *find_locked(const std::string &cert);
 
-    std::function<clock_t::time_point()> now_;
+    std::function<steady_clock_t::time_point()> now_;
     std::mutex mutex_;
     std::vector<seat_t> seats_;
     std::string driver_;  ///< Cert of the driving seat, or empty.
     bool host_hold_ = false;  ///< Tray took control; a lone seat does not drive by itself.
     std::string ticked_owner_;
     std::chrono::minutes idle_limit_ {5};
-    clock_t::time_point last_input_;
+    steady_clock_t::time_point last_input_;
   };
 
   /**

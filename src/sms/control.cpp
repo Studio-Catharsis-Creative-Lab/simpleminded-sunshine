@@ -23,7 +23,7 @@ namespace sms::control {
     return std::string(hex, 12);
   }
 
-  baton_t::baton_t(std::function<clock_t::time_point()> now):
+  baton_t::baton_t(std::function<steady_clock_t::time_point()> now):
       now_(std::move(now)) {
   }
 
@@ -50,35 +50,44 @@ namespace sms::control {
     return seats_.empty() ? std::string {} : seats_.front().cert;  // seats_ is in join order
   }
 
-  void baton_t::set_driver_locked(const std::string &cert) {
+  std::string baton_t::set_driver_locked(const std::string &cert) {
     if (driver_ == cert) {
-      return;
+      return {};
     }
-    const std::string old = driver_;
+    std::string old = driver_;
     driver_ = cert;
     last_input_ = now_();
     if (auto *seat = find_locked(cert)) {
       seat->asked = false;
     }
+    return old;
+  }
+
+  std::string baton_t::expire_idle_locked() {
+    if (!driver_.empty() && seats_.size() > 1 && now_() - last_input_ >= idle_limit_) {
+      return set_driver_locked({});
+    }
+    return {};
+  }
+
+  void baton_t::notify_change(const std::string &old) {
     if (!old.empty() && on_driver_change) {
       on_driver_change(old);
     }
   }
 
-  void baton_t::expire_idle_locked() {
-    if (!driver_.empty() && seats_.size() > 1 && now_() - last_input_ >= idle_limit_) {
-      set_driver_locked({});
-    }
-  }
-
   void baton_t::join(const std::string &cert, const std::string &name) {
-    std::lock_guard lock(mutex_);
-    if (find_locked(cert)) {
-      return;
-    }
-    seats_.push_back({cert, seat_id(cert), name, false, now_()});
-    if (seats_.size() == 1 && !host_hold_) {
-      set_driver_locked(cert);
+    {
+      std::lock_guard lock(mutex_);
+      if (find_locked(cert)) {
+        return;
+      }
+      seats_.push_back({cert, seat_id(cert), name, false, now_()});
+      if (seats_.size() == 1 && !host_hold_) {
+        set_driver_locked(cert);  // nobody was driving: nothing to release
+      } else if (seats_.size() == 2) {
+        last_input_ = now_();  // an idle lone driver must not be dropped the instant someone joins
+      }
     }
   }
 
@@ -106,105 +115,141 @@ namespace sms::control {
   }
 
   bool baton_t::may_input(const std::string &cert) {
-    std::lock_guard lock(mutex_);
-    expire_idle_locked();
-    if (driver_.empty() && !host_hold_ && seats_.size() == 1 && seats_.front().cert == cert) {
-      set_driver_locked(cert);  // alone: drives as with stock Sunshine
+    std::string old;
+    bool driving = false;
+    {
+      std::lock_guard lock(mutex_);
+      old = expire_idle_locked();
+      if (!cert.empty() && find_locked(cert)) {
+        if (driver_.empty() && !host_hold_ && seats_.size() == 1) {
+          set_driver_locked(cert);  // alone: drives as with stock Sunshine
+        }
+        if (driver_ == cert) {
+          last_input_ = now_();
+          driving = true;
+        }
+      }
     }
-    if (driver_ != cert) {
-      return false;
-    }
-    last_input_ = now_();
-    return true;
+    notify_change(old);
+    return driving;
   }
 
   result_e baton_t::request(const std::string &cert) {
+    std::string old;
     std::string name;
+    result_e result = result_e::ok;
     {
       std::lock_guard lock(mutex_);
-      expire_idle_locked();
+      old = expire_idle_locked();
       auto *seat = find_locked(cert);
       if (!seat) {
-        return result_e::no_stream;
-      }
-      if (driver_ == cert) {
-        return result_e::ok;
-      }
-      if (driver_.empty()) {
+        result = result_e::no_stream;
+      } else if (driver_ == cert) {
+        // already driving
+      } else if (driver_.empty()) {
         host_hold_ = false;
         set_driver_locked(cert);
-        return result_e::ok;
+      } else if (!seat->asked) {
+        seat->asked = true;
+        name = seat->name;
       }
-      seat->asked = true;
-      name = seat->name;
     }
-    if (on_request) {
+    notify_change(old);
+    if (!name.empty() && on_request) {
       on_request(name);
     }
-    return result_e::ok;
+    return result;
   }
 
   result_e baton_t::give(const std::string &cert, const std::string &to_id) {
-    std::lock_guard lock(mutex_);
-    expire_idle_locked();
-    if (driver_ != cert) {
-      return result_e::not_driver;
+    std::string old;
+    result_e result = result_e::ok;
+    {
+      std::lock_guard lock(mutex_);
+      old = expire_idle_locked();
+      if (cert.empty() || driver_ != cert || !find_locked(cert)) {
+        result = result_e::not_driver;
+      } else if (auto *to = find_by_id_locked(to_id)) {
+        old = set_driver_locked(to->cert);
+      } else {
+        result = result_e::no_such_seat;
+      }
     }
-    auto *to = find_by_id_locked(to_id);
-    if (!to) {
-      return result_e::no_such_seat;
-    }
-    set_driver_locked(to->cert);
-    return result_e::ok;
+    notify_change(old);
+    return result;
   }
 
   result_e baton_t::takeback(const std::string &cert) {
-    std::lock_guard lock(mutex_);
-    if (!find_locked(cert)) {
-      return result_e::no_stream;
+    std::string old;
+    result_e result = result_e::ok;
+    {
+      std::lock_guard lock(mutex_);
+      if (!find_locked(cert)) {
+        return result_e::no_stream;
+      }
+      if (owner_cert_locked() != cert) {
+        return result_e::not_owner;
+      }
+      host_hold_ = false;
+      old = set_driver_locked(cert);
     }
-    if (owner_cert_locked() != cert) {
-      return result_e::not_owner;
-    }
-    host_hold_ = false;
-    set_driver_locked(cert);
-    return result_e::ok;
+    notify_change(old);
+    return result;
   }
 
   void baton_t::host_takeback() {
-    std::lock_guard lock(mutex_);
-    host_hold_ = true;
-    set_driver_locked({});
+    std::string old;
+    {
+      std::lock_guard lock(mutex_);
+      if (seats_.empty()) {
+        return;  // no stream: a hold would outlive nothing and block the next first seat
+      }
+      host_hold_ = true;
+      old = set_driver_locked({});
+    }
+    notify_change(old);
   }
 
   void baton_t::host_give(const std::string &to_id) {
-    std::lock_guard lock(mutex_);
-    if (auto *to = find_by_id_locked(to_id)) {
-      host_hold_ = false;
-      set_driver_locked(to->cert);
+    std::string old;
+    {
+      std::lock_guard lock(mutex_);
+      if (auto *to = find_by_id_locked(to_id)) {
+        host_hold_ = false;
+        old = set_driver_locked(to->cert);
+      }
     }
+    notify_change(old);
   }
 
   void baton_t::host_release() {
-    std::lock_guard lock(mutex_);
-    host_hold_ = false;
-    set_driver_locked({});
+    std::string old;
+    {
+      std::lock_guard lock(mutex_);
+      host_hold_ = false;
+      old = set_driver_locked({});
+    }
+    notify_change(old);
   }
 
   view_t baton_t::view(const std::string &cert) {
-    std::lock_guard lock(mutex_);
-    expire_idle_locked();
+    std::string old;
     view_t v;
-    v.driving = !driver_.empty() && driver_ == cert;
-    v.owner = owner_cert_locked() == cert;
-    if (auto *d = find_locked(driver_)) {
-      v.driver_name = d->name;
-    }
-    for (const auto &s : seats_) {
-      if (s.cert != cert) {
-        v.seats.push_back(s);
+    {
+      std::lock_guard lock(mutex_);
+      old = expire_idle_locked();
+      v.driving = !driver_.empty() && driver_ == cert;
+      v.owner = owner_cert_locked() == cert;
+      if (auto *d = find_locked(driver_)) {
+        v.driver_name = d->name;
+      }
+      for (const auto &s : seats_) {
+        if (s.cert != cert) {
+          v.seats.push_back(s);
+        }
       }
     }
+    notify_change(old);
     return v;
   }
 
@@ -218,9 +263,15 @@ namespace sms::control {
   }
 
   bool baton_t::remote_driving() {
-    std::lock_guard lock(mutex_);
-    expire_idle_locked();
-    return !driver_.empty();
+    std::string old;
+    bool driving;
+    {
+      std::lock_guard lock(mutex_);
+      old = expire_idle_locked();
+      driving = !driver_.empty();
+    }
+    notify_change(old);
+    return driving;
   }
 
   baton_t &baton() {
