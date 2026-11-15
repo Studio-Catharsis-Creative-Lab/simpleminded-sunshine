@@ -4,6 +4,7 @@
  */
 #include "../tests_common.h"
 
+#include <chrono>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -115,8 +116,20 @@ TEST(SmsClipboard, OverOneMegabyteIsRefused) {
 }
 
 TEST(SmsClipboard, StuckReaderIsKilledAfterTwoSeconds) {
-  FakeReader fake("sleep 10");
+  FakeReader fake("exec sleep 10");
   const auto start = std::chrono::steady_clock::now();
   EXPECT_EQ(sms::read_clipboard().status, sms::read_status::failed);
   EXPECT_LT(std::chrono::steady_clock::now() - start, std::chrono::seconds(4));
+}
+
+TEST(SmsClipboard, ReaderThatClosesOutputThenHangsIsKilled) {
+  FakeReader fake("exec 1>&-; sleep 10");
+  const auto start = std::chrono::steady_clock::now();
+  EXPECT_EQ(sms::read_clipboard().status, sms::read_status::failed);
+  EXPECT_LT(std::chrono::steady_clock::now() - start, std::chrono::seconds(4));
+}
+
+TEST(SmsClipboard, ControlCharactersAreDroppedFromText) {
+  const auto tree = sms::clipboard_reply({sms::read_status::ok, "a\x01" "b\x1b" "[0mc\td", {}});
+  EXPECT_EQ(tree.get<std::string>("root.text"), "ab[0mc\td");
 }

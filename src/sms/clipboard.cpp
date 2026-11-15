@@ -54,7 +54,16 @@ namespace sms {
     switch (result.status) {
       case read_status::ok:
         tree.put("root.<xmlattr>.status_code", 200);
-        tree.put("root.text", result.text);
+        {
+          // XML 1.0 cannot carry control characters other than tab, LF and CR.
+          std::string text;
+          for (const char c : result.text) {
+            if (static_cast<unsigned char>(c) >= 0x20 || c == '\t' || c == '\n' || c == '\r') {
+              text += c;
+            }
+          }
+          tree.put("root.text", text);
+        }
         break;
       case read_status::not_streaming:
         fail(403, "Clipboard is shared only during a stream");
@@ -91,9 +100,10 @@ namespace sms {
         // A user service may start without the desktop's environment; the socket is still there.
         if (const char *runtime = std::getenv("XDG_RUNTIME_DIR")) {
           std::error_code ec;
-          for (const auto &entry : std::filesystem::directory_iterator(runtime, ec)) {
-            const std::string name = entry.path().filename().string();
-            if (name.starts_with("wayland-") && !name.ends_with(".lock") && entry.is_socket(ec)) {
+          // Explicit loop: the range-for form can throw when advancing.
+          for (std::filesystem::directory_iterator it(runtime, ec), end; !ec && it != end; it.increment(ec)) {
+            const std::string name = it->path().filename().string();
+            if (name.starts_with("wayland-") && !name.ends_with(".lock") && it->is_socket(ec)) {
               wayland = name;
               break;
             }
@@ -157,6 +167,7 @@ namespace sms {
       if (devnull >= 0) {
         dup2(devnull, STDERR_FILENO);
       }
+      close_range(3, ~0U, 0);  // don't leak Sunshine's non-CLOEXEC sockets to the reader
       execvpe(argv[0], argv.data(), envp.data());
       _exit(127);
     }
@@ -202,9 +213,26 @@ namespace sms {
     if (timed_out || truncated) {
       kill(pid, SIGKILL);
     }
+    // A reader that closes stdout and then hangs must not outlive the deadline either.
     int status = 0;
-    while (waitpid(pid, &status, 0) < 0 && errno == EINTR) {}
-    const int exit_code = WIFEXITED(status) ? WEXITSTATUS(status) : -1;
+    pid_t reaped = 0;
+    while (reaped == 0 && std::chrono::steady_clock::now() < deadline) {
+      reaped = waitpid(pid, &status, WNOHANG);
+      if (reaped < 0 && errno == EINTR) {
+        reaped = 0;
+      }
+      if (reaped == 0) {
+        usleep(10000);
+      }
+    }
+    if (reaped == 0) {
+      kill(pid, SIGKILL);
+      do {
+        reaped = waitpid(pid, &status, 0);
+      } while (reaped < 0 && errno == EINTR);
+    }
+    // -1 (e.g. ECHILD: another thread reaped the child) leaves status meaningless.
+    const int exit_code = (reaped > 0 && WIFEXITED(status)) ? WEXITSTATUS(status) : -1;
     return result_from_run(true, timed_out, exit_code, std::move(output), truncated, reader->install_hint);
   }
 }  // namespace sms
