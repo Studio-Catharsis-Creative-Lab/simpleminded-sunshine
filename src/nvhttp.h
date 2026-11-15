@@ -110,6 +110,14 @@ namespace nvhttp {
   };
 
   /**
+   * @brief Simpleminded Screens: the client certificate (PEM) this request's own TLS connection verified with.
+   *
+   * @param request HTTPS request data.
+   * @return The PEM, or empty when the connection is unknown or gone.
+   */
+  std::string verified_client_cert(const std::shared_ptr<typename SimpleWeb::ServerBase<SunshineHTTPS>::Request> &request);
+
+  /**
    * @brief Enumerates supported pAIR PHASE options.
    */
   enum class PAIR_PHASE {
@@ -407,6 +415,14 @@ namespace nvhttp {
       const std::string &private_key_file,
       std::shared_ptr<SimpleWeb::ScopeRunner> &handler_scope
     );
+
+    /**
+     * @brief Install a client-certificate verify callback on a server from make_https_server, before start().
+     *
+     * @param server Server returned by make_https_server.
+     * @param verify Returns 1 to accept the connection's certificate.
+     */
+    void set_https_verify(SimpleWeb::ServerBase<SunshineHTTPS> &server, std::function<int(SSL *)> verify);
 
     /**
      * @brief Dispatch a plain-HTTP pairing request through the production handler.

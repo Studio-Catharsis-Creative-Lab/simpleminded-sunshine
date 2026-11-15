@@ -146,8 +146,10 @@ namespace sms::control {
       std::lock_guard lock(mutex_);
       old = expire_idle_locked();
       if (!cert.empty() && find_locked(cert)) {
-        if (driver_.empty() && !host_hold_ && seats_.size() == 1) {
-          set_driver_locked(cert);  // alone: drives as with stock Sunshine
+        if (driver_.empty() && !host_hold_) {
+          // Free: the first seat to send input takes it. Alone, that is stock Sunshine; with others it
+          // lets a button-less client (Moonlight) drive. Our viewer sends nothing while watching.
+          set_driver_locked(cert);  // driver_ was empty, so nothing to release
         }
         if (driver_ == cert) {
           last_input_ = now_();

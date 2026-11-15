@@ -300,3 +300,20 @@ TEST(SmsControl, OnChangeFiresOnJoinLeaveAndGive) {
   f.baton.leave("B");
   EXPECT_GE(n, 4);
 }
+
+TEST(SmsControl, FirstInputTakesAFreeBatonUnlessTheHostHoldsIt) {
+  fixture_t f;
+  int n = 0;
+  f.baton.on_change = [&n] { ++n; };
+  f.baton.join("A", "Tim");
+  f.baton.join("B", "Lee");
+  f.baton.host_release();  // free: a button-less client must not be stuck watching
+  n = 0;
+  EXPECT_TRUE(f.baton.may_input("B"));
+  EXPECT_EQ(f.baton.view("A").driver_name, "Lee");
+  EXPECT_FALSE(f.baton.may_input("A"));
+  EXPECT_EQ(n, 1);
+  f.baton.host_takeback();  // held: input never takes it
+  EXPECT_FALSE(f.baton.may_input("A"));
+  EXPECT_FALSE(f.baton.remote_driving());
+}

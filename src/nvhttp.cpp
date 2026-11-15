@@ -11,6 +11,7 @@
 #include <chrono>
 #include <filesystem>
 #include <format>
+#include <map>
 #include <mutex>
 #include <string>
 #include <utility>
@@ -62,6 +63,35 @@ namespace nvhttp {
   std::mutex &client_auth_mutex() {
     static std::mutex mutex;
     return mutex;
+  }
+
+  // Simpleminded Screens: the certificate each live TLS connection verified with, by peer endpoint.
+  // last_verified_client_cert names whoever shook hands last, which is another client when two connect at once.
+  std::mutex verified_certs_mutex;
+  std::map<boost::asio::ip::tcp::endpoint, std::pair<std::weak_ptr<void>, std::string>> verified_certs;
+
+  void remember_verified_cert(const boost::asio::ip::tcp::endpoint &peer, std::weak_ptr<void> connection, SSL *ssl) {
+    crypto::x509_t x509 {
+#if OPENSSL_VERSION_MAJOR >= 3
+      SSL_get1_peer_certificate(ssl)
+#else
+      SSL_get_peer_certificate(ssl)
+#endif
+    };
+    if (!x509) {
+      return;
+    }
+    std::lock_guard lock {verified_certs_mutex};
+    std::erase_if(verified_certs, [](const auto &entry) {
+      return entry.second.first.expired();
+    });
+    verified_certs[peer] = {std::move(connection), crypto::pem(x509)};
+  }
+
+  std::string verified_client_cert(const std::shared_ptr<SimpleWeb::ServerBase<SunshineHTTPS>::Request> &request) {
+    std::lock_guard lock {verified_certs_mutex};
+    const auto it = verified_certs.find(request->remote_endpoint());
+    return it == verified_certs.end() || it->second.first.expired() ? std::string {} : it->second.second;
   }
 
   /**
@@ -116,6 +146,13 @@ namespace nvhttp {
         if (verify && !verify(session->connection->socket->native_handle())) {
           this->write(session, on_verify_failed);
         } else {
+          if (verify) {  // Simpleminded Screens: /control asks which client this connection is
+            SimpleWeb::error_code peer_error;
+            const auto peer = session->connection->socket->lowest_layer().remote_endpoint(peer_error);
+            if (!peer_error) {
+              remember_verified_cert(peer, session->connection, session->connection->socket->native_handle());
+            }
+          }
           this->read(session);
         }
       } else if (this->on_error) {
@@ -1646,8 +1683,11 @@ namespace nvhttp {
   void control(resp_https_t response, req_https_t request) {
     print_req<SunshineHTTPS>(request);
 
-    // The TLS verify callback recorded which paired client this is.
-    const std::string cert = last_verified_client_cert;
+    // This connection's own verified certificate; the last handshake is only a fallback.
+    std::string cert = verified_client_cert(request);
+    if (cert.empty()) {
+      cert = last_verified_client_cert;
+    }
     auto args = request->parse_query_string();
     const auto action = get_arg(args, "action", "");
     auto &baton = sms::control::baton();
@@ -1902,7 +1942,6 @@ namespace nvhttp {
 
   // Simpleminded Screens: at most one owner; tell the baton.
   bool set_client_owner(const std::string_view uuid, bool owner) {
-    std::string cert;
     {
       std::lock_guard lock {client_auth_mutex()};
       auto it = std::ranges::find(client_root.named_devices, uuid, &named_cert_t::uuid);
@@ -1916,11 +1955,8 @@ namespace nvhttp {
       }
       it->sms_owner = owner;
       save_state();
-      if (owner) {
-        cert = it->cert;
-      }
     }
-    sms::control::baton().set_owner_cert(cert);
+    sms::control::baton().set_owner_cert(owner_cert());  // unticking another device keeps the real owner
     return true;
   }
 
@@ -1980,6 +2016,10 @@ namespace nvhttp {
       auto server = std::make_unique<test_https_server_t>(certificate_file, private_key_file);
       handler_scope = server->handler_runner;
       return server;
+    }
+
+    void set_https_verify(SimpleWeb::ServerBase<SunshineHTTPS> &server, std::function<int(SSL *)> verify) {
+      static_cast<SunshineHTTPSServer &>(server).verify = std::move(verify);
     }
 
     void pair_http(

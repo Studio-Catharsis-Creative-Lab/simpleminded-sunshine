@@ -51,6 +51,7 @@ rest watch. Paired HTTPS port only. The host's own mouse and keyboard are never 
 | Give (by the driver, or from the tray) | That seat drives |
 | Take back by the owner | Owner drives |
 | Take back from the tray | Nobody drives remotely |
+| Input from a seat, nobody driving, tray not holding | That seat drives |
 | Driver idle `sms_control_idle_minutes` (default 5) | Control is free |
 | Driver or seat disconnects | Driver: free. Seat: its asked mark clears |
 
@@ -66,16 +67,22 @@ stored in the state file as `sms_owner`. The ticked device, when connected, can 
 Tray: a "Control" submenu with "Take control back" (greyed unless a remote seat drives),
 "Release control", and "Give control to <name>" for each viewer that asked (up to 4 shown).
 
-Moonlight limit: a stock Moonlight watcher cannot ask for control; only Simpleminded Screens can.
+Moonlight limit: a stock Moonlight watcher cannot ask for control; only Simpleminded Screens can. A
+Moonlight seat picks up a free baton with its first input (Simpleminded Screens sends no input while
+watching, so it never grabs it that way).
+
+Identity: `/control` names the asking client by the certificate its own TLS connection verified with
+(looked up by peer address), not by the last handshake on the server.
 
 Known limits:
 - Clicking the notification opens the tray menu, except on Linux/Wayland with Qt 6.9+ (QTBUG-139921).
 - The notification opens the menu only until the menu next refreshes (a join, leave, give or request clears it; the vendored tray library has no menu-only update).
 - The tray shows at most 4 "Give control to" entries; a 5th asking viewer gets the notification but no entry.
+- The baton's side effects (input reset, tray refresh) run on Sunshine's single `task_pool` worker, which also injects input. A slow tray update can delay input briefly; a dedicated thread would remove that.
 
 ### `<SmsFeatures>` in `serverinfo`
 
-A comma-separated list of what this fork adds (today `clipboard`). The viewer uses it to enable
+A comma-separated list of what this fork adds (today `clipboard,control`). The viewer uses it to enable
 fork-only features; stock clients ignore unknown elements.
 
 ## Where the changes are
@@ -92,6 +99,7 @@ fork-only features; stock clients ignore unknown elements.
 | `src/system_tray.cpp` | "Control" submenu and the asks-for-control notification |
 | `src_assets/common/assets/web/Troubleshooting.vue` | "Owner" checkbox per paired device |
 | `tests/unit/test_nvhttp_client_auth.cpp` | Owner tick is exclusive |
+| `src/nvhttp.cpp` (`SunshineHTTPSServer::handle_handshake`), `tests/unit/test_nvhttp_https.cpp` | Each TLS connection's verified certificate, which `/control` uses for identity |
 | `SMS.md` | This file |
 
 Run the fork's tests: `build/tests/test_sunshine --gtest_filter='SmsClipboard.*'`.
