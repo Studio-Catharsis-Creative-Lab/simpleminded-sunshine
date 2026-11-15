@@ -8,7 +8,7 @@
 
 : "${_commit:=@GITHUB_COMMIT@}"
 
-pkgname='sunshine'
+pkgname='sunshine-sms'
 pkgver=@PROJECT_VERSION@@SUNSHINE_SUB_VERSION@
 pkgrel=1
 pkgdesc="@PROJECT_DESCRIPTION@"
@@ -83,8 +83,8 @@ optdepends=(
   'libva-mesa-driver: AMD GPU encoding support'
 )
 
-provides=()
-conflicts=()
+provides=('sunshine')
+conflicts=('sunshine')
 
 source=("$pkgname::git+@GITHUB_CLONE_URL@#commit=${_commit}")
 sha256sums=('SKIP')
