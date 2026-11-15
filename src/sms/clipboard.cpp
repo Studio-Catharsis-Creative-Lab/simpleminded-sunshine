@@ -5,6 +5,26 @@
 // local includes
 #include "clipboard.h"
 
+// standard includes
+#include <cerrno>
+#include <chrono>
+#include <csignal>
+#include <cstdlib>
+#include <filesystem>
+#include <optional>
+#include <string_view>
+#include <system_error>
+#include <utility>
+#include <vector>
+
+// platform includes
+#include <fcntl.h>
+#include <poll.h>
+#include <sys/wait.h>
+#include <unistd.h>
+
+extern char **environ;
+
 namespace sms {
   read_result result_from_run(bool started, bool timed_out, int exit_code, std::string output, bool truncated, const std::string &install_hint) {
     if (!started || exit_code == 127) {  // 127: exec found no such program
@@ -54,10 +74,137 @@ namespace sms {
     }
     return tree;
   }
-}  // namespace sms
 
-namespace sms {
+  namespace {
+    /**
+     * @brief The clipboard program for this desktop.
+     */
+    struct reader_t {
+      std::vector<std::string> argv;  ///< Command and arguments.
+      std::string install_hint;  ///< Shown when the command is missing.
+      std::string wayland_display;  ///< Set for the child when Sunshine's own environment lacks it.
+    };
+
+    std::optional<reader_t> pick_reader() {
+      std::string wayland = std::getenv("WAYLAND_DISPLAY") ? std::getenv("WAYLAND_DISPLAY") : "";
+      if (wayland.empty()) {
+        // A user service may start without the desktop's environment; the socket is still there.
+        if (const char *runtime = std::getenv("XDG_RUNTIME_DIR")) {
+          std::error_code ec;
+          for (const auto &entry : std::filesystem::directory_iterator(runtime, ec)) {
+            const std::string name = entry.path().filename().string();
+            if (name.starts_with("wayland-") && !name.ends_with(".lock") && entry.is_socket(ec)) {
+              wayland = name;
+              break;
+            }
+          }
+        }
+      }
+      if (!wayland.empty()) {
+        return reader_t {{"wl-paste", "--no-newline", "--type", "text"}, "Install wl-clipboard on the host", wayland};
+      }
+      if (std::getenv("DISPLAY")) {
+        return reader_t {{"xclip", "-o", "-selection", "clipboard"}, "Install xclip on the host", {}};
+      }
+      return std::nullopt;
+    }
+  }  // namespace
+
   read_result read_clipboard() {
-    return {read_status::failed};
+    const auto reader = pick_reader();
+    if (!reader) {
+      return {read_status::failed};
+    }
+
+    // Everything the child needs is built before fork: Sunshine is multithreaded, so the child may
+    // only make async-signal-safe calls.
+    std::vector<char *> argv;
+    for (const auto &arg : reader->argv) {
+      argv.push_back(const_cast<char *>(arg.c_str()));
+    }
+    argv.push_back(nullptr);
+    std::vector<std::string> env_strings;
+    for (char **e = environ; *e; ++e) {
+      if (!std::string_view(*e).starts_with("WAYLAND_DISPLAY=")) {
+        env_strings.emplace_back(*e);
+      }
+    }
+    if (!reader->wayland_display.empty()) {
+      env_strings.push_back("WAYLAND_DISPLAY=" + reader->wayland_display);
+    }
+    std::vector<char *> envp;
+    for (auto &s : env_strings) {
+      envp.push_back(s.data());
+    }
+    envp.push_back(nullptr);
+
+    int out[2];
+    if (pipe2(out, O_CLOEXEC) != 0) {
+      return {read_status::failed};
+    }
+    const int devnull = open("/dev/null", O_WRONLY | O_CLOEXEC);
+    const pid_t pid = fork();
+    if (pid < 0) {
+      close(out[0]);
+      close(out[1]);
+      if (devnull >= 0) {
+        close(devnull);
+      }
+      return {read_status::failed};
+    }
+    if (pid == 0) {
+      dup2(out[1], STDOUT_FILENO);
+      if (devnull >= 0) {
+        dup2(devnull, STDERR_FILENO);
+      }
+      execvpe(argv[0], argv.data(), envp.data());
+      _exit(127);
+    }
+    close(out[1]);
+    if (devnull >= 0) {
+      close(devnull);
+    }
+
+    std::string output;
+    bool timed_out = false;
+    bool truncated = false;
+    const auto deadline = std::chrono::steady_clock::now() + clipboard_timeout;
+    char buffer[65536];
+    while (true) {
+      const auto left = std::chrono::duration_cast<std::chrono::milliseconds>(deadline - std::chrono::steady_clock::now()).count();
+      if (left <= 0) {
+        timed_out = true;
+        break;
+      }
+      pollfd ready {out[0], POLLIN, 0};
+      const int n = poll(&ready, 1, static_cast<int>(left));
+      if (n < 0 && errno == EINTR) {
+        continue;
+      }
+      if (n <= 0) {
+        timed_out = true;
+        break;
+      }
+      const ssize_t got = read(out[0], buffer, sizeof(buffer));
+      if (got < 0 && errno == EINTR) {
+        continue;
+      }
+      if (got <= 0) {
+        break;  // the reader closed its output
+      }
+      output.append(buffer, static_cast<std::size_t>(got));
+      if (output.size() > clipboard_limit) {
+        truncated = true;
+        break;
+      }
+    }
+    close(out[0]);
+    if (timed_out || truncated) {
+      kill(pid, SIGKILL);
+    }
+    int status = 0;
+    while (waitpid(pid, &status, 0) < 0 && errno == EINTR) {}
+    const int exit_code = WIFEXITED(status) ? WEXITSTATUS(status) : -1;
+    return result_from_run(true, timed_out, exit_code, std::move(output), truncated, reader->install_hint);
   }
 }  // namespace sms

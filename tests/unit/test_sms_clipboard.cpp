@@ -4,7 +4,13 @@
  */
 #include "../tests_common.h"
 
+#include <cstdlib>
+#include <filesystem>
+#include <fstream>
+#include <optional>
 #include <sstream>
+
+#include <unistd.h>
 
 #include <boost/property_tree/xml_parser.hpp>
 
@@ -53,4 +59,64 @@ TEST(SmsClipboard, RunOutcomesMapToStatuses) {
   const auto ok = sms::result_from_run(true, false, 0, "hello", false, hint);
   EXPECT_EQ(ok.status, sms::read_status::ok);
   EXPECT_EQ(ok.text, "hello");
+}
+
+namespace {
+  /**
+   * @brief A fake wl-paste on PATH for one test, with WAYLAND_DISPLAY set. Restores both after.
+   */
+  class FakeReader {
+  public:
+    explicit FakeReader(const std::string &script) {
+      dir_ = std::filesystem::temp_directory_path() / ("sms-clip-" + std::to_string(::getpid()));
+      std::filesystem::create_directories(dir_);
+      const auto path = dir_ / "wl-paste";
+      std::ofstream(path) << "#!/bin/sh\n" << script << "\n";
+      std::filesystem::permissions(path, std::filesystem::perms::owner_all);
+      old_path_ = std::getenv("PATH") ? std::getenv("PATH") : "";
+      const char *wayland = std::getenv("WAYLAND_DISPLAY");
+      old_wayland_ = wayland ? std::optional<std::string>(wayland) : std::nullopt;
+      ::setenv("PATH", (dir_.string() + ":" + old_path_).c_str(), 1);
+      ::setenv("WAYLAND_DISPLAY", "wayland-test", 1);
+    }
+
+    ~FakeReader() {
+      ::setenv("PATH", old_path_.c_str(), 1);
+      if (old_wayland_) {
+        ::setenv("WAYLAND_DISPLAY", old_wayland_->c_str(), 1);
+      } else {
+        ::unsetenv("WAYLAND_DISPLAY");
+      }
+      std::filesystem::remove_all(dir_);
+    }
+
+  private:
+    std::filesystem::path dir_;
+    std::string old_path_;
+    std::optional<std::string> old_wayland_;
+  };
+}  // namespace
+
+TEST(SmsClipboard, ReaderOutputComesBack) {
+  FakeReader fake("printf 'from the host'");
+  const auto result = sms::read_clipboard();
+  EXPECT_EQ(result.status, sms::read_status::ok);
+  EXPECT_EQ(result.text, "from the host");
+}
+
+TEST(SmsClipboard, EmptyClipboardIsEmpty) {
+  FakeReader fake("echo 'Nothing is copied' >&2; exit 1");
+  EXPECT_EQ(sms::read_clipboard().status, sms::read_status::empty);
+}
+
+TEST(SmsClipboard, OverOneMegabyteIsRefused) {
+  FakeReader fake("head -c 1100000 /dev/zero | tr '\\0' 'a'");
+  EXPECT_EQ(sms::read_clipboard().status, sms::read_status::too_large);
+}
+
+TEST(SmsClipboard, StuckReaderIsKilledAfterTwoSeconds) {
+  FakeReader fake("sleep 10");
+  const auto start = std::chrono::steady_clock::now();
+  EXPECT_EQ(sms::read_clipboard().status, sms::read_status::failed);
+  EXPECT_LT(std::chrono::steady_clock::now() - start, std::chrono::seconds(4));
 }
