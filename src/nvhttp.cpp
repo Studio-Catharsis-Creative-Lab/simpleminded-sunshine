@@ -445,12 +445,14 @@ namespace nvhttp {
     std::lock_guard lock {client_auth_mutex()};
     client_root = std::move(client);
     rebuild_client_cert_chain();
-    for (const auto &named_cert : client_root.named_devices) {  // Simpleminded Screens
+    std::string owner;  // Simpleminded Screens: always set, empty when nothing is ticked
+    for (const auto &named_cert : client_root.named_devices) {
       if (named_cert.sms_owner) {
-        sms::control::baton().set_owner_cert(named_cert.cert);
+        owner = named_cert.cert;
         break;
       }
     }
+    sms::control::baton().set_owner_cert(owner);
   }
 
   /**
@@ -1856,26 +1858,32 @@ namespace nvhttp {
   }
 
   void erase_all_clients() {
-    std::lock_guard lock {client_auth_mutex()};
-    client_root = {};
-    cert_chain.clear();
-    save_state();
+    {
+      std::lock_guard lock {client_auth_mutex()};
+      client_root = {};
+      cert_chain.clear();
+      save_state();
+    }
+    sms::control::baton().set_owner_cert(owner_cert());  // Simpleminded Screens
   }
 
   bool unpair_client(const std::string_view uuid) {
-    std::lock_guard lock {client_auth_mutex()};
     bool removed = false;
-    for (auto it = client_root.named_devices.begin(); it != client_root.named_devices.end();) {
-      if ((*it).uuid == uuid) {
-        it = client_root.named_devices.erase(it);
-        removed = true;
-      } else {
-        ++it;
+    {
+      std::lock_guard lock {client_auth_mutex()};
+      for (auto it = client_root.named_devices.begin(); it != client_root.named_devices.end();) {
+        if ((*it).uuid == uuid) {
+          it = client_root.named_devices.erase(it);
+          removed = true;
+        } else {
+          ++it;
+        }
       }
-    }
 
-    rebuild_client_cert_chain();
-    save_state();
+      rebuild_client_cert_chain();
+      save_state();
+    }
+    sms::control::baton().set_owner_cert(owner_cert());  // Simpleminded Screens
     return removed;
   }
 

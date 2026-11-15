@@ -82,6 +82,8 @@ namespace sms::control {
 
     std::function<void(const std::string &old_driver_cert)> on_driver_change;  ///< Release that seat's held input.
     std::function<void(const std::string &name)> on_request;  ///< Tell the host computer.
+    std::function<void()> on_change;  ///< Seats or the driver changed (fires outside the lock); the tray refreshes.
+    bool seats_connected();  ///< Any remote seat is connected.
 
   private:
     // The *_locked helpers return the old driver cert when the driver changed, else empty.
@@ -89,6 +91,7 @@ namespace sms::control {
     std::string expire_idle_locked();
     std::string set_driver_locked(const std::string &cert);
     void notify_change(const std::string &old);
+    void leave_locked(const std::string &cert);
     std::string owner_cert_locked() const;
     seat_t *find_by_id_locked(const std::string &id);
     seat_t *find_locked(const std::string &cert);
@@ -97,6 +100,7 @@ namespace sms::control {
     std::mutex mutex_;
     std::vector<seat_t> seats_;
     std::string driver_;  ///< Cert of the driving seat, or empty.
+    bool dirty_ = false;  ///< Seats or driver changed since on_change last fired.
     bool host_hold_ = false;  ///< Tray took control; a lone seat does not drive by itself.
     std::string ticked_owner_;
     std::chrono::minutes idle_limit_ {5};

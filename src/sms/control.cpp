@@ -8,6 +8,7 @@
 // standard includes
 #include <algorithm>
 #include <cstdio>
+#include <utility>
 
 // lib includes
 #include <openssl/sha.h>
@@ -55,6 +56,7 @@ namespace sms::control {
       return {};
     }
     std::string old = driver_;
+    dirty_ = true;
     driver_ = cert;
     last_input_ = now_();
     if (auto *seat = find_locked(cert)) {
@@ -74,6 +76,14 @@ namespace sms::control {
     if (!old.empty() && on_driver_change) {
       on_driver_change(old);
     }
+    bool changed;
+    {
+      std::lock_guard lock(mutex_);
+      changed = std::exchange(dirty_, false);
+    }
+    if (changed && on_change) {
+      on_change();
+    }
   }
 
   void baton_t::join(const std::string &cert, const std::string &name) {
@@ -83,6 +93,7 @@ namespace sms::control {
         ++seat->sessions;  // a reconnect while the old session still runs
         return;
       }
+      dirty_ = true;
       seats_.push_back({cert, seat_id(cert), name, false, now_(), 1});
       if (seats_.size() == 1 && !host_hold_) {
         set_driver_locked(cert);  // nobody was driving: nothing to release
@@ -90,14 +101,23 @@ namespace sms::control {
         last_input_ = now_();  // an idle lone driver must not be dropped the instant someone joins
       }
     }
+    notify_change({});
   }
 
   void baton_t::leave(const std::string &cert) {
-    std::lock_guard lock(mutex_);
+    {
+      std::lock_guard lock(mutex_);
+      leave_locked(cert);
+    }
+    notify_change({});
+  }
+
+  void baton_t::leave_locked(const std::string &cert) {
     auto *seat = find_locked(cert);
     if (seat && --seat->sessions > 0) {
       return;  // another session of this cert is still live
     }
+    dirty_ = true;
     std::erase_if(seats_, [&](const seat_t &s) {
       return s.cert == cert;
     });
@@ -265,6 +285,11 @@ namespace sms::control {
       return s.asked;
     });
     return out;
+  }
+
+  bool baton_t::seats_connected() {
+    std::lock_guard lock(mutex_);
+    return !seats_.empty();
   }
 
   bool baton_t::remote_driving() {

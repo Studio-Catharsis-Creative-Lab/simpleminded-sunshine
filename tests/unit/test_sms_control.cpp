@@ -285,3 +285,17 @@ TEST(SmsControl, SeatSurvivesUntilItsLastSessionLeaves) {
   EXPECT_FALSE(f.baton.may_input("A"));
   EXPECT_TRUE(f.baton.view("B").seats.empty());
 }
+
+TEST(SmsControl, OnChangeFiresOnJoinLeaveAndGive) {
+  fixture_t f;
+  int n = 0;
+  f.baton.on_change = [&n] { ++n; };
+  f.baton.join("A", "a");
+  EXPECT_EQ(n, 1);
+  f.baton.join("B", "b");
+  EXPECT_EQ(n, 2);
+  EXPECT_EQ(f.baton.give("A", seat_id("B")), result_e::ok);
+  EXPECT_EQ(n, 3);
+  f.baton.leave("B");
+  EXPECT_GE(n, 4);
+}

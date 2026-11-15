@@ -71,6 +71,7 @@
 
   // local includes
   #include "config.h"
+  #include "globals.h"  // Simpleminded Screens: task_pool
   #include "confighttp.h"
   #include "display_device.h"
   #include "logging.h"
@@ -291,6 +292,7 @@ namespace system_tray {
 
   // Simpleminded Screens: the "Control" submenu. The tray library cannot hide items, so the
   // per-seat "Give control to" slots sit last and a nullptr terminator is moved after the used ones.
+  // shortcut: up to 4 "Give control" entries; a 5th asking seat gets the notification but no entry — grow the slots if rooms get bigger.
   constexpr size_t SMS_GIVE_SLOTS = 4;  ///< Most seats that can be offered control at once.
   // A plain static (not a function-local) so the tray's menu literal below stays a constant initializer.
   std::array<struct tray_menu, 3 + SMS_GIVE_SLOTS> sms_control_menu_storage {};
@@ -305,6 +307,13 @@ namespace system_tray {
     return ids;
   }
 
+  // Guards the seat ids only. The tray thread reads them in a click callback, so it must never wait on
+  // tray_state_mutex() (a thread holding that may be blocked in tray_update on the tray thread).
+  std::mutex &sms_give_id_mutex() {
+    static std::mutex mutex;
+    return mutex;
+  }
+
   void tray_sms_takeback_cb([[maybe_unused]] struct tray_menu *item);
   void tray_sms_release_cb([[maybe_unused]] struct tray_menu *item);
   void tray_sms_give_cb(struct tray_menu *item);
@@ -315,9 +324,11 @@ namespace system_tray {
   void rebuild_sms_control_menu() {
     auto &menu = sms_control_menu_storage;
     auto &baton = sms::control::baton();
-    menu[0] = {.text = "Take control back", .disabled = baton.remote_driving() ? 0 : 1, .cb = tray_sms_takeback_cb};
-    menu[1] = {.text = "Release control", .cb = tray_sms_release_cb};
+    const bool remote = baton.remote_driving();
+    menu[0] = {.text = "Take control back", .disabled = remote ? 0 : 1, .cb = tray_sms_takeback_cb};
+    menu[1] = {.text = "Release control", .disabled = (!remote && baton.seats_connected()) ? 0 : 1, .cb = tray_sms_release_cb};
     size_t used = 0;
+    const std::scoped_lock id_lock(sms_give_id_mutex());
     for (const auto &seat : baton.asked_seats()) {
       if (used == SMS_GIVE_SLOTS) {
         break;
@@ -379,23 +390,41 @@ namespace system_tray {
     const std::scoped_lock lock(tray_state_mutex());
     rebuild_sms_control_menu();
     if (tray_initialized_state().load()) {
+      // Do not pop the last notification again.
+      tray.notification_title = nullptr;
+      tray.notification_text = nullptr;
+      tray.notification_cb = nullptr;
+      tray.notification_icon = nullptr;
       tray_update(&tray);
     }
   }
 
+  // Tray callbacks run on the tray thread, and tray_update blocks on that thread while holding
+  // tray_state_mutex(). So callbacks never take that mutex: refreshes go through task_pool.
+  void queue_sms_control_refresh() {
+    task_pool.push([] {
+      refresh_sms_control_tray();
+    });
+  }
+
   void tray_sms_takeback_cb([[maybe_unused]] struct tray_menu *item) {
     sms::control::baton().host_takeback();
-    refresh_sms_control_tray();
+    queue_sms_control_refresh();
   }
 
   void tray_sms_release_cb([[maybe_unused]] struct tray_menu *item) {
     sms::control::baton().host_release();
-    refresh_sms_control_tray();
+    queue_sms_control_refresh();
   }
 
   void tray_sms_give_cb(struct tray_menu *item) {
-    sms::control::baton().host_give(*static_cast<std::string *>(item->context));
-    refresh_sms_control_tray();
+    std::string id;
+    {
+      const std::scoped_lock lock(sms_give_id_mutex());
+      id = *static_cast<std::string *>(item->context);
+    }
+    sms::control::baton().host_give(id);
+    queue_sms_control_refresh();
   }
 
   #ifdef SUNSHINE_TESTS
@@ -782,7 +811,7 @@ namespace system_tray {
   void update_tray_control_request(const std::string &name) {
     const std::scoped_lock lock(tray_state_mutex());
     rebuild_sms_control_menu();
-    tray.notification_cb = nullptr;
+    tray.notification_cb = nullptr;  // shortcut: the tray library cannot open its menu, so a click does nothing
     static std::string msg;
     msg = name + " asks for control";
     tray.notification_title = "Control Requested";
@@ -791,6 +820,20 @@ namespace system_tray {
     if (tray_initialized_state().load()) {
       tray_update(&tray);
     }
+  }
+
+  // Simpleminded Screens: set before the HTTPS server and streams start, so no thread reads a hook while it is assigned.
+  // Both hooks hop to task_pool: they fire on HTTPS/stream threads and the update locks tray_state_mutex().
+  void install_control_hooks() {
+    auto &baton = sms::control::baton();
+    baton.on_request = [](const std::string &name) {
+      task_pool.push([name] {
+        update_tray_control_request(name);
+      });
+    };
+    baton.on_change = [] {
+      queue_sms_control_refresh();
+    };
   }
 
   /**
@@ -885,7 +928,6 @@ namespace system_tray {
       tray_initialized_state().store(true);
     }
 
-    sms::control::baton().on_request = update_tray_control_request;
 
     BOOST_LOG(info) << "System tray created"sv;
     return 0;

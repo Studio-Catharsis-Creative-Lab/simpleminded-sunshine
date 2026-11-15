@@ -131,6 +131,11 @@ namespace system_tray {
    */
   void update_tray_require_pin();
 
+  /**
+   * @brief Simpleminded Screens: hook the control baton to the tray. Call before the HTTPS server starts.
+   */
+  void install_control_hooks();
+
 #if defined(_WIN32) || defined(__APPLE__)
   /**
    * @brief Update the Virtual HID Broker license submenu and optional notification.

@@ -492,6 +492,9 @@ int main(int argc, char *argv[]) {
     return lifetime::desired_exit_code;
   }
 
+#if defined SUNSHINE_TRAY && SUNSHINE_TRAY >= 1
+  system_tray::install_control_hooks();  // Simpleminded Screens: before any thread can fire the baton's hooks
+#endif
   std::jthread httpThread {nvhttp::start};
   std::jthread configThread {confighttp::start};
   std::jthread rtspThread {rtsp_stream::start};
