@@ -52,6 +52,7 @@ namespace sms::control {
     bool driving = false;  ///< The asking seat drives.
     bool owner = false;  ///< The asking seat is the owner.
     std::string driver_name;  ///< Empty when nobody drives remotely.
+    std::string driver_id;  ///< The driving seat's id, empty when nobody drives remotely.
     std::vector<seat_t> seats;  ///< Every other seat, in join order.
   };
 

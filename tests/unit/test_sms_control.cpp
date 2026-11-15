@@ -171,6 +171,7 @@ TEST(SmsControl, ReplyCarriesStateAndRefusals) {
   EXPECT_EQ(ok.get<std::string>("root.me"), "driver");
   EXPECT_EQ(ok.get<int>("root.owner"), 1);
   EXPECT_EQ(ok.get<std::string>("root.driver"), "Tim");
+  EXPECT_EQ(ok.get<std::string>("root.driver_id"), seat_id("A"));
   EXPECT_EQ(ok.get<std::string>("root.seat.name"), "Lee");
   EXPECT_EQ(ok.get<std::string>("root.seat.id"), seat_id("B"));
   EXPECT_EQ(ok.get<int>("root.seat.asked"), 1);

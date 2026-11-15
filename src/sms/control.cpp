@@ -267,6 +267,7 @@ namespace sms::control {
       v.owner = owner_cert_locked() == cert;
       if (auto *d = find_locked(driver_)) {
         v.driver_name = d->name;
+        v.driver_id = d->id;
       }
       for (const auto &s : seats_) {
         if (s.cert != cert) {
@@ -335,6 +336,7 @@ namespace sms::control {
     tree.put("root.me", view.driving ? "driver" : "watcher");
     tree.put("root.owner", view.owner ? 1 : 0);
     tree.put("root.driver", view.driver_name);
+    tree.put("root.driver_id", view.driver_id);
     for (const auto &s : view.seats) {
       boost::property_tree::ptree seat;
       seat.put("id", s.id);
