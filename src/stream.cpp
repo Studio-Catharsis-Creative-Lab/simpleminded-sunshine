@@ -29,7 +29,7 @@
 #include "network.h"
 #include "platform/common.h"
 #include "process.h"
-#include "sms/control.h"
+#include "sms/control.h"  // Simpleminded Screens
 #include "stream.h"
 #include "sync.h"
 #include "system_tray.h"

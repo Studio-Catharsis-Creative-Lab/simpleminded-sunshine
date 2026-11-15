@@ -31,6 +31,7 @@ namespace sms::control {
     std::string name;  ///< Paired-device name.
     bool asked = false;  ///< Asked for control and has not got it yet.
     steady_clock_t::time_point joined;  ///< When the seat connected.
+    int sessions = 0;  ///< Live sessions of this cert; the seat goes when the last one leaves.
   };
 
   /**

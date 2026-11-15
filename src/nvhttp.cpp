@@ -36,7 +36,7 @@
 #include "process.h"
 #include "rtsp.h"
 #include "sms/clipboard.h"
-#include "sms/control.h"
+#include "sms/control.h"  // Simpleminded Screens
 #include "string_hash.h"
 #include "system_tray.h"
 #include "utility.h"
@@ -1778,7 +1778,10 @@ namespace nvhttp {
     };
 
     sms::control::baton().on_driver_change = [](const std::string &old_driver) {
-      rtsp_stream::sms_reset_input(old_driver);
+      // Deferred: may fire on the broadcast thread, which rtsp clear() joins while holding the session lock.
+      task_pool.push([old_driver] {
+        rtsp_stream::sms_reset_input(old_driver);
+      });
     };  // Simpleminded Screens
     sms::control::baton().set_idle_limit(std::chrono::minutes(config::sms.control_idle_minutes));  // Simpleminded Screens
 

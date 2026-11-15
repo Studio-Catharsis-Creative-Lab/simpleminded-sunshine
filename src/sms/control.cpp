@@ -79,10 +79,11 @@ namespace sms::control {
   void baton_t::join(const std::string &cert, const std::string &name) {
     {
       std::lock_guard lock(mutex_);
-      if (find_locked(cert)) {
+      if (auto *seat = find_locked(cert)) {
+        ++seat->sessions;  // a reconnect while the old session still runs
         return;
       }
-      seats_.push_back({cert, seat_id(cert), name, false, now_()});
+      seats_.push_back({cert, seat_id(cert), name, false, now_(), 1});
       if (seats_.size() == 1 && !host_hold_) {
         set_driver_locked(cert);  // nobody was driving: nothing to release
       } else if (seats_.size() == 2) {
@@ -93,6 +94,10 @@ namespace sms::control {
 
   void baton_t::leave(const std::string &cert) {
     std::lock_guard lock(mutex_);
+    auto *seat = find_locked(cert);
+    if (seat && --seat->sessions > 0) {
+      return;  // another session of this cert is still live
+    }
     std::erase_if(seats_, [&](const seat_t &s) {
       return s.cert == cert;
     });

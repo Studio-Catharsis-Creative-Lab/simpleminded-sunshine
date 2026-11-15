@@ -273,3 +273,15 @@ TEST(SmsControl, HostReleaseFreesControl) {
   EXPECT_EQ(f.baton.request("B"), result_e::ok);
   EXPECT_TRUE(f.baton.may_input("B"));
 }
+
+TEST(SmsControl, SeatSurvivesUntilItsLastSessionLeaves) {
+  fixture_t f;
+  f.baton.join("A", "Tim");
+  f.baton.join("A", "Tim");  // reconnect before the old session ended
+  f.baton.leave("A");
+  EXPECT_TRUE(f.baton.may_input("A"));
+  EXPECT_EQ(f.baton.view("B").seats.size(), 1u);
+  f.baton.leave("A");
+  EXPECT_FALSE(f.baton.may_input("A"));
+  EXPECT_TRUE(f.baton.view("B").seats.empty());
+}
