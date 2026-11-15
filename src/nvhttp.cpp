@@ -1683,11 +1683,9 @@ namespace nvhttp {
   void control(resp_https_t response, req_https_t request) {
     print_req<SunshineHTTPS>(request);
 
-    // This connection's own verified certificate; the last handshake is only a fallback.
+    // This connection's own verified certificate only: the last handshake may be another client.
+    // Empty (endpoint gone) is refused by the baton like any unknown seat.
     std::string cert = verified_client_cert(request);
-    if (cert.empty()) {
-      cert = last_verified_client_cert;
-    }
     auto args = request->parse_query_string();
     const auto action = get_arg(args, "action", "");
     auto &baton = sms::control::baton();
