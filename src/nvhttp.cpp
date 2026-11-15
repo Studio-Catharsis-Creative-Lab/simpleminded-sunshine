@@ -35,6 +35,7 @@
 #include "platform/common.h"
 #include "process.h"
 #include "rtsp.h"
+#include "sms/clipboard.h"
 #include "string_hash.h"
 #include "system_tray.h"
 #include "utility.h"
@@ -1292,6 +1293,7 @@ namespace nvhttp {
 
     const uint32_t codec_mode_flags = get_codec_mode_flags();
     tree.put("root.ServerCodecModeSupport", codec_mode_flags);
+    tree.put("root.SmsFeatures", sms::features);  // Simpleminded Screens; stock clients ignore it
 
     if (!config::nvhttp.external_ip.empty()) {
       tree.put("root.ExternalIP", config::nvhttp.external_ip);
@@ -1606,6 +1608,24 @@ namespace nvhttp {
   }
 
   /**
+   * @brief Simpleminded Screens: the host's clipboard text, for a paired client during a stream.
+   * @param response The HTTP response object.
+   * @param request The HTTP request object.
+   */
+  void clipboard(resp_https_t response, req_https_t request) {
+    print_req<SunshineHTTPS>(request);
+
+    // Blocks this (single-threaded) server for at most sms::clipboard_timeout.
+    const bool streaming = rtsp_stream::session_count() > 0;
+    const auto result = streaming ? sms::read_clipboard() : sms::read_result {sms::read_status::not_streaming};
+
+    std::ostringstream data;
+    pt::write_xml(data, sms::clipboard_reply(result));
+    response->write(data.str());
+    response->close_connection_after_response = true;
+  }
+
+  /**
    * @brief Return an application asset requested by the client.
    *
    * @param response HTTP response object to populate.
@@ -1739,6 +1759,7 @@ namespace nvhttp {
       resume(host_audio, resp, req);
     };
     https_server.resource["^/cancel$"]["GET"] = cancel;
+    https_server.resource["^/clipboard$"]["GET"] = clipboard;  // Simpleminded Screens
 
     https_server.config.reuse_address = true;
     https_server.config.address = net::get_bind_address(address_family);
