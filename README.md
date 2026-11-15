@@ -1,3 +1,8 @@
+> **This is Simpleminded Sunshine**, a fork of Sunshine for
+> [Simpleminded Screens](https://github.com/Studio-Catharsis-Creative-Lab/simpleminded-screens).
+> It adds host-to-viewer clipboard (`GET /clipboard`) and stays compatible with Moonlight.
+> What changed, how to build and install: **[SMS.md](SMS.md)**. The rest of this README is upstream's.
+
 <div align="center">
   <img
     src="sunshine.svg"
