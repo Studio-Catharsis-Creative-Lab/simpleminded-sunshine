@@ -70,6 +70,7 @@ Moonlight limit: a stock Moonlight watcher cannot ask for control; only Simplemi
 
 Known limits:
 - Clicking the notification opens the tray menu, except on Linux/Wayland with Qt 6.9+ (QTBUG-139921).
+- The notification opens the menu only until the menu next refreshes (a join, leave, give or request clears it; the vendored tray library has no menu-only update).
 - The tray shows at most 4 "Give control to" entries; a 5th asking viewer gets the notification but no entry.
 
 ### `<SmsFeatures>` in `serverinfo`
