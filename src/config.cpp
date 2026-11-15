@@ -863,6 +863,8 @@ namespace config {
   /**
    * @brief Default top-level Sunshine configuration values used before file and CLI overrides.
    */
+  sms_t sms {};  // Simpleminded Screens
+
   sunshine_t sunshine {
     "en",  // locale
     2,  // min_log_level
@@ -1780,6 +1782,7 @@ namespace config {
     int_between_f(vars, "lan_encryption_mode", stream.lan_encryption_mode, {0, 2});
     int_between_f(vars, "wan_encryption_mode", stream.wan_encryption_mode, {0, 2});
     int_between_f(vars, "packetsize", stream.packetsize, {0, PACKETSIZE_MAX});
+    int_between_f(vars, "sms_control_idle_minutes", sms.control_idle_minutes, {1, 600});  // Simpleminded Screens
     bool_f(vars, "dscp_tagging", stream.dscp_tagging);
 
     path_f(vars, "file_apps", stream.file_apps);

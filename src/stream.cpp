@@ -29,6 +29,7 @@
 #include "network.h"
 #include "platform/common.h"
 #include "process.h"
+#include "sms/control.h"
 #include "stream.h"
 #include "sync.h"
 #include "system_tray.h"
@@ -562,6 +563,7 @@ namespace stream {
 
     std::uint32_t launch_session_id;  ///< RTSP launch-session ID associated with this stream.
     std::string client_cert;  ///< PEM certificate for the paired client owning the stream.
+    std::string sms_client_name;  ///< Simpleminded Screens: paired-device name, for the baton.
     std::string input_session_id;  ///< Stable client identity used to retain input devices across resume.
 
     safe::mail_raw_t::event_t<bool> shutdown_event;  ///< Event raised when the stream should shut down.
@@ -1260,7 +1262,9 @@ namespace stream {
         std::copy(payload.end() - 16, payload.end(), std::begin(iv));
       }
 
-      input::passthrough(session->input, std::move(plaintext));
+      if (sms::control::baton().may_input(session->client_cert)) {  // Simpleminded Screens: only the driver
+        input::passthrough(session->input, std::move(plaintext));
+      }
     });
 
     server->map(packetTypes[IDX_ENCRYPTED], [server](session_t *session, const std::string_view &payload) {
@@ -1323,7 +1327,9 @@ namespace stream {
       // IDX_INPUT_DATA callback will attempt to decrypt unencrypted data, therefore we need pass it directly
       if (type == packetTypes[IDX_INPUT_DATA]) {
         plaintext.erase(std::begin(plaintext), std::begin(plaintext) + 4);
-        input::passthrough(session->input, std::move(plaintext));
+        if (sms::control::baton().may_input(session->client_cert)) {  // Simpleminded Screens: only the driver
+          input::passthrough(session->input, std::move(plaintext));
+        }
       } else {
         server->call(type, session, next_payload, true);
       }
@@ -2275,6 +2281,15 @@ namespace stream {
     }
 
     /**
+     * @brief Simpleminded Screens: release keys and buttons this session holds down.
+     */
+    void reset_input(session_t &session) {
+      if (session.input) {
+        input::reset(session.input);
+      }
+    }
+
+    /**
      * @brief Stop the active streaming session and prevent new packets from being queued.
      */
     void stop(session_t &session) {
@@ -2292,6 +2307,7 @@ namespace stream {
      * @brief Wait for worker threads owned by the session to exit.
      */
     void join(session_t &session) {
+      sms::control::baton().leave(session.client_cert);  // Simpleminded Screens
       // Current Nvidia drivers have a bug where NVENC can deadlock the encoder thread with hardware-accelerated
       // GPU scheduling enabled. If this happens, we will terminate ourselves and the service can restart.
       // The alternative is that Sunshine can never start another session until it's manually restarted.
@@ -2381,6 +2397,8 @@ namespace stream {
 #endif
       }
 
+      sms::control::baton().join(session.client_cert, session.sms_client_name.empty() ? "Viewer" : session.sms_client_name);  // Simpleminded Screens
+
       return 0;
     }
 
@@ -2395,6 +2413,7 @@ namespace stream {
       session->shutdown_event = mail->event<bool>(mail::shutdown);
       session->launch_session_id = launch_session.id;
       session->client_cert = launch_session.client_cert;
+      session->sms_client_name = launch_session.client_name;  // Simpleminded Screens
       session->input_session_id = launch_session.client_cert.empty() ? launch_session.unique_id : launch_session.client_cert;
 
       session->config = config;

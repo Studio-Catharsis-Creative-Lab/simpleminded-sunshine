@@ -120,6 +120,8 @@ namespace rtsp_stream {
    */
   int session_count();
 
+  void sms_reset_input(std::string_view cert);  ///< Simpleminded Screens.
+
   /**
    * @brief Terminates all running streaming sessions.
    */

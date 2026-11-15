@@ -36,6 +36,7 @@
 #include "process.h"
 #include "rtsp.h"
 #include "sms/clipboard.h"
+#include "sms/control.h"
 #include "string_hash.h"
 #include "system_tray.h"
 #include "utility.h"
@@ -1626,6 +1627,37 @@ namespace nvhttp {
   }
 
   /**
+   * @brief Simpleminded Screens: the control baton for the asking paired client.
+   * @param response The HTTP response object.
+   * @param request The HTTP request object.
+   */
+  void control(resp_https_t response, req_https_t request) {
+    print_req<SunshineHTTPS>(request);
+
+    // The TLS verify callback recorded which paired client this is.
+    const std::string cert = last_verified_client_cert;
+    auto args = request->parse_query_string();
+    const auto action = get_arg(args, "action", "");
+    auto &baton = sms::control::baton();
+
+    sms::control::result_e result = sms::control::result_e::ok;
+    if (action == "request") {
+      result = baton.request(cert);
+    } else if (action == "give") {
+      result = baton.give(cert, get_arg(args, "to", ""));
+    } else if (action == "takeback") {
+      result = baton.takeback(cert);
+    } else if (rtsp_stream::session_count() == 0) {
+      result = sms::control::result_e::no_stream;
+    }
+
+    std::ostringstream data;
+    pt::write_xml(data, sms::control::control_reply(result, baton.view(cert)));
+    response->write(data.str());
+    response->close_connection_after_response = true;
+  }
+
+  /**
    * @brief Return an application asset requested by the client.
    *
    * @param response HTTP response object to populate.
@@ -1745,6 +1777,11 @@ namespace nvhttp {
       tree.put("root.<xmlattr>.status_message"s, "The client is not authorized. Certificate verification failed."s);
     };
 
+    sms::control::baton().on_driver_change = [](const std::string &old_driver) {
+      rtsp_stream::sms_reset_input(old_driver);
+    };  // Simpleminded Screens
+    sms::control::baton().set_idle_limit(std::chrono::minutes(config::sms.control_idle_minutes));  // Simpleminded Screens
+
     https_server.default_resource["GET"] = not_found<SunshineHTTPS>;
     https_server.resource["^/serverinfo$"]["GET"] = serverinfo<SunshineHTTPS>;
     https_server.resource["^/pair$"]["GET"] = [](auto resp, auto req) {
@@ -1760,6 +1797,7 @@ namespace nvhttp {
     };
     https_server.resource["^/cancel$"]["GET"] = cancel;
     https_server.resource["^/clipboard$"]["GET"] = clipboard;  // Simpleminded Screens
+    https_server.resource["^/control$"]["GET"] = control;  // Simpleminded Screens
 
     https_server.config.reuse_address = true;
     https_server.config.address = net::get_bind_address(address_family);

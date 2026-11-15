@@ -414,6 +414,15 @@ namespace config {
   extern input_t input;
   extern sunshine_t sunshine;
 
+  /**
+   * @brief Simpleminded Screens options.
+   */
+  struct sms_t {
+    int control_idle_minutes = 5;  ///< Simpleminded Screens: free the baton after this long without input.
+  };
+
+  extern sms_t sms;
+
 #ifdef SUNSHINE_TESTS
   /**
    * @brief Parse and apply serialized configuration text for unit tests.

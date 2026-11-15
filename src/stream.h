@@ -94,5 +94,6 @@ namespace stream {
      * @return PEM certificate associated with the session's client.
      */
     const std::string &client_cert(session_t &session);
+    void reset_input(session_t &session);  ///< Simpleminded Screens: release held keys and buttons.
   }  // namespace session
 }  // namespace stream

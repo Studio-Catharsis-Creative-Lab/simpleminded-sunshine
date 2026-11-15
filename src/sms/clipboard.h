@@ -15,7 +15,7 @@
 namespace sms {
   constexpr std::size_t clipboard_limit = 1024 * 1024;  ///< Text beyond this is refused (413).
   constexpr auto clipboard_timeout = std::chrono::seconds(2);  ///< The reader is killed after this.
-  constexpr const char *features = "clipboard";  ///< Advertised in serverinfo as SmsFeatures.
+  constexpr const char *features = "clipboard,control";  ///< Advertised in serverinfo as SmsFeatures.
 
   /**
    * @brief How a clipboard read ended.

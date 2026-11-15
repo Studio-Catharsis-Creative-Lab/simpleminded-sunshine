@@ -788,6 +788,34 @@ consent prompt for directory ACLs, so the Web UI shows setup steps for correctin
     </tr>
 </table>
 
+### sms_control_idle_minutes
+
+<table>
+    <tr>
+        <td>Description</td>
+        <td colspan="2">
+            Simpleminded Screens: free the control baton after the driving viewer sends no input for this many
+            minutes, so another viewer (or the host) can take over.
+        </td>
+    </tr>
+    <tr>
+        <td>Default</td>
+        <td colspan="2">@code{}
+            5
+            @endcode</td>
+    </tr>
+    <tr>
+        <td>Range</td>
+        <td colspan="2">1-600</td>
+    </tr>
+    <tr>
+        <td>Example</td>
+        <td colspan="2">@code{}
+            sms_control_idle_minutes = 5
+            @endcode</td>
+    </tr>
+</table>
+
 ## Audio/Video
 
 ### audio_sink

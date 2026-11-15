@@ -617,6 +617,18 @@ namespace rtsp_stream {
     }
 
     /**
+     * @brief Simpleminded Screens: release held input on sessions owned by a certificate.
+     */
+    void reset_input_by_cert(std::string_view cert) {
+      auto lg = _session_slots.lock();
+      for (auto &slot : *_session_slots) {
+        if (stream::session::client_cert(*slot) == cert) {
+          stream::session::reset_input(*slot);
+        }
+      }
+    }
+
+    /**
      * @brief Clear by cert state.
      *
      * @param cert Certificate data or object used by the operation.
@@ -706,6 +718,10 @@ namespace rtsp_stream {
     server.clear(false);
 
     return server.session_count();
+  }
+
+  void sms_reset_input(std::string_view cert) {  // Simpleminded Screens
+    server.reset_input_by_cert(cert);
   }
 
   void terminate_sessions() {

@@ -410,6 +410,8 @@
     "qsv_slow_hevc_desc": "This can enable HEVC encoding on older Intel GPUs, at the cost of higher GPU usage and worse performance.",
     "restart_note": "Sunshine is restarting to apply changes.",
     "search_options": "Search configuration options...",
+    "sms_control_idle_minutes": "Control Idle Timeout (minutes)",
+    "sms_control_idle_minutes_desc": "Simpleminded Screens: free the control baton after the driving viewer sends no input for this many minutes. Range 1-600.",
     "stream_audio": "Stream Audio",
     "stream_audio_desc": "Whether to stream audio or not. Disabling this can be useful for streaming headless displays as second monitors.",
     "sunshine_name": "Sunshine Name",
