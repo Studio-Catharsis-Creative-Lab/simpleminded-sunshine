@@ -69,7 +69,7 @@ Tray: a "Control" submenu with "Take control back" (greyed unless a remote seat 
 Moonlight limit: a stock Moonlight watcher cannot ask for control; only Simpleminded Screens can.
 
 Known limits:
-- Clicking the notification does not open the menu (the tray library has no call for it).
+- Clicking the notification opens the tray menu, except on Linux/Wayland with Qt 6.9+ (QTBUG-139921).
 - The tray shows at most 4 "Give control to" entries; a 5th asking viewer gets the notification but no entry.
 
 ### `<SmsFeatures>` in `serverinfo`

@@ -339,6 +339,9 @@ namespace system_tray {
       ++used;
     }
     menu[2 + used] = {.text = nullptr};
+    for (size_t i = used; i < SMS_GIVE_SLOTS; ++i) {
+      menu[2 + i].context = &sms_give_id_storage()[i];  // never null, even on unused slots
+    }
   }
 
   // Tray menu
@@ -421,6 +424,9 @@ namespace system_tray {
     std::string id;
     {
       const std::scoped_lock lock(sms_give_id_mutex());
+      if (!item->context) {
+        return;  // the slot was rebuilt into the terminator after the click
+      }
       id = *static_cast<std::string *>(item->context);
     }
     sms::control::baton().host_give(id);
@@ -811,7 +817,10 @@ namespace system_tray {
   void update_tray_control_request(const std::string &name) {
     const std::scoped_lock lock(tray_state_mutex());
     rebuild_sms_control_menu();
-    tray.notification_cb = nullptr;  // shortcut: the tray library cannot open its menu, so a click does nothing
+    // Runs on the tray thread. Does not open the menu on Linux/Wayland with Qt 6.9+ (QTBUG-139921).
+    tray.notification_cb = [] {
+      tray_show_menu();
+    };
     static std::string msg;
     msg = name + " asks for control";
     tray.notification_title = "Control Requested";
