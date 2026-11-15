@@ -83,6 +83,26 @@ TEST_F(ClientAuthorizationTest, CanonicalIdentityFailsClosedAndTracksEnableState
   EXPECT_TRUE(nvhttp::test_support::authorize_client_certificate(paired_credentials.x509));
 }
 
+// Simpleminded Screens
+TEST_F(ClientAuthorizationTest, SmsOwnerTickIsExclusive) {
+  const auto first = crypto::gen_creds("Sunshine Owner One", 2048);
+  const auto second = crypto::gen_creds("Sunshine Owner Two", 2048);
+  const auto first_uuid = nvhttp::test_support::add_client("one", first.x509, true);
+  const auto second_uuid = nvhttp::test_support::add_client("two", second.x509, true);
+  ASSERT_FALSE(first_uuid.empty());
+  ASSERT_FALSE(second_uuid.empty());
+  EXPECT_TRUE(nvhttp::owner_cert().empty());
+
+  ASSERT_TRUE(nvhttp::set_client_owner(first_uuid, true));
+  const auto first_owner = nvhttp::owner_cert();
+  EXPECT_FALSE(first_owner.empty());
+  ASSERT_TRUE(nvhttp::set_client_owner(second_uuid, true));
+  EXPECT_NE(nvhttp::owner_cert(), first_owner);
+  ASSERT_TRUE(nvhttp::set_client_owner(second_uuid, false));
+  EXPECT_TRUE(nvhttp::owner_cert().empty());
+  EXPECT_FALSE(nvhttp::set_client_owner("no-such-uuid", true));
+}
+
 TEST_F(ClientAuthorizationTest, DerivedLeafDoesNotInheritPairedAuthorization) {
   const auto paired_credentials = test_utils::certificates::generate_ca_credentials();
   const auto derived_credentials = test_utils::certificates::generate_derived_leaf(paired_credentials);

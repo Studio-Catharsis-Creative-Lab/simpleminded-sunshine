@@ -76,6 +76,7 @@
   #include "logging.h"
   #include "platform/common.h"
   #include "process.h"
+  #include "sms/control.h"  // Simpleminded Screens
   #include "src/entry_handler.h"
   #include "string_hash.h"
   #include "system_tray.h"
@@ -288,6 +289,47 @@ namespace system_tray {
   }
   #endif
 
+  // Simpleminded Screens: the "Control" submenu. The tray library cannot hide items, so the
+  // per-seat "Give control to" slots sit last and a nullptr terminator is moved after the used ones.
+  constexpr size_t SMS_GIVE_SLOTS = 4;  ///< Most seats that can be offered control at once.
+  // A plain static (not a function-local) so the tray's menu literal below stays a constant initializer.
+  std::array<struct tray_menu, 3 + SMS_GIVE_SLOTS> sms_control_menu_storage {};
+
+  std::array<std::string, SMS_GIVE_SLOTS> &sms_give_text_storage() {
+    static std::array<std::string, SMS_GIVE_SLOTS> text;
+    return text;
+  }
+
+  std::array<std::string, SMS_GIVE_SLOTS> &sms_give_id_storage() {
+    static std::array<std::string, SMS_GIVE_SLOTS> ids;
+    return ids;
+  }
+
+  void tray_sms_takeback_cb([[maybe_unused]] struct tray_menu *item);
+  void tray_sms_release_cb([[maybe_unused]] struct tray_menu *item);
+  void tray_sms_give_cb(struct tray_menu *item);
+
+  /**
+   * @brief Rebuild the Control submenu from the baton. The caller must hold `tray_state_mutex()`.
+   */
+  void rebuild_sms_control_menu() {
+    auto &menu = sms_control_menu_storage;
+    auto &baton = sms::control::baton();
+    menu[0] = {.text = "Take control back", .disabled = baton.remote_driving() ? 0 : 1, .cb = tray_sms_takeback_cb};
+    menu[1] = {.text = "Release control", .cb = tray_sms_release_cb};
+    size_t used = 0;
+    for (const auto &seat : baton.asked_seats()) {
+      if (used == SMS_GIVE_SLOTS) {
+        break;
+      }
+      sms_give_id_storage()[used] = seat.id;
+      sms_give_text_storage()[used] = "Give control to " + seat.name;
+      menu[2 + used] = {.text = sms_give_text_storage()[used].c_str(), .cb = tray_sms_give_cb, .context = &sms_give_id_storage()[used]};
+      ++used;
+    }
+    menu[2 + used] = {.text = nullptr};
+  }
+
   // Tray menu
   static struct tray tray = {
     .icon = TRAY_ICON,
@@ -317,6 +359,8 @@ namespace system_tray {
   #ifdef _WIN32
         {.text = "Reset Display Device Config", .cb = tray_reset_display_device_config_cb},
   #endif
+        {.text = "Control", .submenu = sms_control_menu_storage.data()},  // Simpleminded Screens
+        {.text = "-"},
         {.text = "Restart", .cb = tray_restart_cb},
         {.text = "Quit", .cb = tray_quit_cb},
         {.text = nullptr}
@@ -329,6 +373,30 @@ namespace system_tray {
     .allIconPaths = {TRAY_ICON, TRAY_ICON_LOCKED, TRAY_ICON_PLAYING, TRAY_ICON_PAUSING},
   #endif
   };
+
+  // Simpleminded Screens
+  void refresh_sms_control_tray() {
+    const std::scoped_lock lock(tray_state_mutex());
+    rebuild_sms_control_menu();
+    if (tray_initialized_state().load()) {
+      tray_update(&tray);
+    }
+  }
+
+  void tray_sms_takeback_cb([[maybe_unused]] struct tray_menu *item) {
+    sms::control::baton().host_takeback();
+    refresh_sms_control_tray();
+  }
+
+  void tray_sms_release_cb([[maybe_unused]] struct tray_menu *item) {
+    sms::control::baton().host_release();
+    refresh_sms_control_tray();
+  }
+
+  void tray_sms_give_cb(struct tray_menu *item) {
+    sms::control::baton().host_give(*static_cast<std::string *>(item->context));
+    refresh_sms_control_tray();
+  }
 
   #ifdef SUNSHINE_TESTS
   const struct tray &tray_data_for_testing() {
@@ -710,6 +778,21 @@ namespace system_tray {
   }
   #endif
 
+  // Simpleminded Screens: a viewer asked for control. May run on the HTTPS thread.
+  void update_tray_control_request(const std::string &name) {
+    const std::scoped_lock lock(tray_state_mutex());
+    rebuild_sms_control_menu();
+    tray.notification_cb = nullptr;
+    static std::string msg;
+    msg = name + " asks for control";
+    tray.notification_title = "Control Requested";
+    tray.notification_text = msg.c_str();
+    tray.notification_icon = tray.allIconPaths[0];
+    if (tray_initialized_state().load()) {
+      tray_update(&tray);
+    }
+  }
+
   /**
    * @brief Initialize the tray, optionally observing an owning thread's stop request.
    *
@@ -793,6 +876,7 @@ namespace system_tray {
       if (stop_token.stop_requested()) {
         return 1;
       }
+      rebuild_sms_control_menu();  // Simpleminded Screens
       if (tray_init(&tray) < 0) {
         BOOST_LOG(warning) << "Failed to create system tray"sv;
         return 1;
@@ -800,6 +884,8 @@ namespace system_tray {
 
       tray_initialized_state().store(true);
     }
+
+    sms::control::baton().on_request = update_tray_control_request;
 
     BOOST_LOG(info) << "System tray created"sv;
     return 0;

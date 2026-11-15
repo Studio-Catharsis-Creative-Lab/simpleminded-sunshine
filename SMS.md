@@ -38,6 +38,36 @@ Replies use the same XML shape as Sunshine's other endpoints:
 
 Any paired client can read the clipboard while any stream is running.
 
+### Control baton (`GET /control`)
+
+With several viewers streaming (`channels = 2` or more in `sunshine.conf`), exactly one drives; the
+rest watch. Paired HTTPS port only. The host's own mouse and keyboard are never blocked.
+
+| Event | Result |
+|---|---|
+| First seat connects | It drives |
+| Request, nobody driving | Requester drives |
+| Request, someone driving | Requester is marked asked; the host tray notifies `<name> asks for control` |
+| Give (by the driver, or from the tray) | That seat drives |
+| Take back by the owner | Owner drives |
+| Take back from the tray | Nobody drives remotely |
+| Driver idle `sms_control_idle_minutes` (default 5) | Control is free |
+| Driver or seat disconnects | Driver: free. Seat: its asked mark clears |
+
+Query: no action returns the state; `?action=request`, `?action=give&to=<id>`, `?action=takeback`
+apply a rule and return the new state (`me`, `owner`, `driver`, one `seat` per viewer with `id`,
+`name`, `asked`). Refusals: 403 Only the driver can give control; 403 Only the owner can take control
+back; 404 That viewer is no longer connected; 409 No stream is running. `serverinfo` lists `control`
+in `<SmsFeatures>`.
+
+Owner tick: Sunshine's Troubleshooting page has an "Owner" checkbox per paired device (at most one),
+stored in the state file as `sms_owner`. The ticked device, when connected, can take control back.
+
+Tray: a "Control" submenu with "Take control back" (greyed unless a remote seat drives),
+"Release control", and "Give control to <name>" for each viewer that asked (up to 4 shown).
+
+Moonlight limit: a stock Moonlight watcher cannot ask for control; only Simpleminded Screens can.
+
 ### `<SmsFeatures>` in `serverinfo`
 
 A comma-separated list of what this fork adds (today `clipboard`). The viewer uses it to enable
@@ -52,6 +82,11 @@ fork-only features; stock clients ignore unknown elements.
 | `cmake/compile_definitions/common.cmake` | The two `src/sms` files in `SUNSHINE_TARGET_FILES` |
 | `tests/unit/test_sms_clipboard.cpp` | Tests: reply format, status mapping, and the real reader against a fake `wl-paste` (output, empty, over 1 MB, stuck, closes-then-hangs) |
 | `packaging/linux/Arch/PKGBUILD` | Package `sunshine-sms`, which provides and conflicts with `sunshine` |
+| `src/sms/control.h`, `src/sms/control.cpp`, `tests/unit/test_sms_control.cpp` | The baton: seats, driver, owner, idle timer, `/control` reply |
+| `src/nvhttp.cpp`, `src/nvhttp.h`, `src/confighttp.cpp` | `control` route, `sms_owner` persistence, `set_client_owner`, `owner_cert`, `owner` in `/api/clients/update` and `/list` |
+| `src/system_tray.cpp` | "Control" submenu and the asks-for-control notification |
+| `src_assets/common/assets/web/Troubleshooting.vue` | "Owner" checkbox per paired device |
+| `tests/unit/test_nvhttp_client_auth.cpp` | Owner tick is exclusive |
 | `SMS.md` | This file |
 
 Run the fork's tests: `build/tests/test_sunshine --gtest_filter='SmsClipboard.*'`.

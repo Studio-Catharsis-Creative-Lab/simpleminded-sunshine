@@ -1462,8 +1462,14 @@ namespace confighttp {
       nlohmann::json input_tree = nlohmann::json::parse(ss.str());
       nlohmann::json output_tree;
       std::string uuid = input_tree.value("uuid", "");
-      bool enabled = input_tree.value("enabled", true);
-      output_tree["status"] = nvhttp::set_client_enabled(uuid, enabled);
+      bool enabled = true;
+      if (input_tree.contains("enabled") || !input_tree.contains("owner")) {  // Simpleminded Screens: owner-only updates leave enabled alone
+        enabled = input_tree.value("enabled", true);
+        output_tree["status"] = nvhttp::set_client_enabled(uuid, enabled);
+      }
+      if (input_tree.contains("owner")) {  // Simpleminded Screens
+        output_tree["status"] = nvhttp::set_client_owner(uuid, input_tree.value("owner", false));
+      }
 
       if (!enabled && output_tree["status"]) {
         auto cert = nvhttp::get_cert_by_uuid(uuid);

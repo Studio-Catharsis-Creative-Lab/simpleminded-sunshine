@@ -186,6 +186,7 @@ namespace nvhttp {
     std::string uuid;  ///< Persistent Moonlight client UUID associated with the certificate.
     std::string cert;  ///< Certificate PEM string or path.
     bool enabled = true;  ///< Whether this persisted client entry may connect.
+    bool sms_owner = false;  ///< Simpleminded Screens: the host owner's device, which can take control back.
   };
 
   /**
@@ -292,6 +293,7 @@ namespace nvhttp {
       named_cert_node.put("cert"s, named_cert.cert);
       named_cert_node.put("uuid"s, named_cert.uuid);
       named_cert_node.put("enabled"s, named_cert.enabled);
+      named_cert_node.put("sms_owner"s, named_cert.sms_owner);  // Simpleminded Screens
       named_cert_nodes.push_back(std::make_pair(""s, named_cert_node));
     }
     root.add_child("root.named_devices"s, named_cert_nodes);
@@ -428,6 +430,7 @@ namespace nvhttp {
         named_cert.cert = el.get_child("cert").get_value<std::string>();
         named_cert.uuid = el.get_child("uuid").get_value<std::string>();
         named_cert.enabled = el.get<bool>("enabled", true);
+        named_cert.sms_owner = el.get<bool>("sms_owner", false);  // Simpleminded Screens
         client.named_devices.emplace_back(named_cert);
       }
     }
@@ -442,6 +445,12 @@ namespace nvhttp {
     std::lock_guard lock {client_auth_mutex()};
     client_root = std::move(client);
     rebuild_client_cert_chain();
+    for (const auto &named_cert : client_root.named_devices) {  // Simpleminded Screens
+      if (named_cert.sms_owner) {
+        sms::control::baton().set_owner_cert(named_cert.cert);
+        break;
+      }
+    }
   }
 
   /**
@@ -1320,6 +1329,7 @@ namespace nvhttp {
       named_cert_node["name"] = named_cert.name;
       named_cert_node["uuid"] = named_cert.uuid;
       named_cert_node["enabled"] = named_cert.enabled;
+      named_cert_node["owner"] = named_cert.sms_owner;  // Simpleminded Screens
       named_cert_nodes.push_back(named_cert_node);
     }
 
@@ -1880,6 +1890,41 @@ namespace nvhttp {
       }
     }
     return false;
+  }
+
+  // Simpleminded Screens: at most one owner; tell the baton.
+  bool set_client_owner(const std::string_view uuid, bool owner) {
+    std::string cert;
+    {
+      std::lock_guard lock {client_auth_mutex()};
+      auto it = std::ranges::find(client_root.named_devices, uuid, &named_cert_t::uuid);
+      if (it == client_root.named_devices.end()) {
+        return false;
+      }
+      if (owner) {
+        for (auto &named_cert : client_root.named_devices) {
+          named_cert.sms_owner = false;
+        }
+      }
+      it->sms_owner = owner;
+      save_state();
+      if (owner) {
+        cert = it->cert;
+      }
+    }
+    sms::control::baton().set_owner_cert(cert);
+    return true;
+  }
+
+  // Simpleminded Screens: the owner's certificate, or empty.
+  std::string owner_cert() {
+    std::lock_guard lock {client_auth_mutex()};
+    for (const auto &named_cert : client_root.named_devices) {
+      if (named_cert.sms_owner) {
+        return named_cert.cert;
+      }
+    }
+    return {};
   }
 
   /**

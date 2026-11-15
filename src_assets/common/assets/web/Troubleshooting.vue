@@ -462,6 +462,15 @@
                    :aria-checked="client.enabled.toString()"
                    @change="toggleClient(client.uuid, !client.enabled)">
           </div>
+          <!-- Simpleminded Screens -->
+          <div class="form-check ms-2 mb-0">
+            <input class="form-check-input" type="checkbox"
+                   :id="'owner-' + client.uuid"
+                   :checked="client.owner"
+                   @change="setOwner(client.uuid, !client.owner)">
+            <label class="form-check-label" :for="'owner-' + client.uuid">Owner</label>
+          </div>
+          <!-- /Simpleminded Screens -->
           <button class="btn btn-danger btn-sm ms-2" @click="unpairSingle(client.uuid)">
             <trash-2 :size="18" class="icon"></trash-2>
           </button>
@@ -923,6 +932,18 @@
               'Content-Type': 'application/json'
             },
             body: JSON.stringify({ uuid, enabled })
+          }).then(() => {
+            this.refreshClients();
+          });
+        },
+        // Simpleminded Screens
+        setOwner(uuid, owner) {
+          fetch("./api/clients/update", {
+            method: "POST",
+            headers: {
+              'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ uuid, owner })
           }).then(() => {
             this.refreshClients();
           });
